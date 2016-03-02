@@ -1,38 +1,30 @@
 package net.techguild.base.data.module;
 
 import android.app.Application;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonDeserializationContext;
-import com.google.gson.JsonDeserializer;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonPrimitive;
-import com.google.gson.JsonSerializationContext;
-import com.google.gson.JsonSerializer;
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.otto.Bus;
 import com.squareup.otto.ThreadEnforcer;
+import com.squareup.picasso.Picasso;
 
 import net.techguild.base.CApp;
-import net.techguild.base.data.adapter.DummyAdapter;
 import net.techguild.base.data.api.DummyService;
+import net.techguild.base.data.api.UserService;
 import net.techguild.base.data.event.UnauthorizedErrorEvent;
+import net.techguild.base.data.manager.UserManager;
+import net.techguild.base.data.manager.UserStore;
+import net.techguild.base.data.serializer.DateTypeAdapter;
 import net.techguild.base.ui.MainActivity;
 import net.techguild.base.util.CLog;
 
-import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
-import java.text.DateFormat;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Locale;
-import java.util.TimeZone;
 
 import javax.inject.Singleton;
 
@@ -57,22 +49,24 @@ import retrofit.converter.GsonConverter;
                 CApp.class,
                 // Activities
                 MainActivity.class,
-                // Adapters
-                DummyAdapter.class
+                // Fragments
+
+                // Views
         }
 )
 public class BasicModule {
-    private static final String API_URL = "http://api.techguild.net/";
+    private static final String API_URL = "http://api.appurl.com/"; //TODO: App url
     private final CApp app;
-    private final SharedPreferences sharedPreferences;
-    private String userToken;
+    private static final String SHARED_PREF_KEY = "appname"; //TODO: App pref key
 
-    public BasicModule(CApp app, SharedPreferences sharedPreferences) {
+    public BasicModule(CApp app) {
         this.app = app;
-        this.sharedPreferences = sharedPreferences;
     }
 
-    // Change commented lines to switch production-test-dev api endpoints
+    @Provides @Singleton Picasso providePicasso() {
+        return Picasso.with(app);
+    }
+
     @Provides @Singleton Endpoint provideEndpoint() {
         return Endpoints.newFixedEndpoint(API_URL);
     }
@@ -82,7 +76,17 @@ public class BasicModule {
     }
 
     @Provides @Singleton SharedPreferences provideSharedPreferences(Application app) {
-        return sharedPreferences;
+        return app.getSharedPreferences(SHARED_PREF_KEY, Context.MODE_PRIVATE);
+    }
+
+    // Managers and Stores
+
+    @Provides @Singleton UserStore provideUserStore(SharedPreferences sharedPreferences) {
+        return new UserStore(sharedPreferences);
+    }
+
+    @Provides @Singleton UserManager provideUserManager(UserStore userStore, UserService userService) {
+        return new UserManager(userStore, userService);
     }
 
     @Provides @Singleton OkHttpClient provideOkHttpClient(Application app) {
@@ -98,20 +102,29 @@ public class BasicModule {
         return new Bus(ThreadEnforcer.ANY);
     }
 
+    @Provides @Singleton Gson provideGson() {
+        GsonBuilder builder = new GsonBuilder();
+        builder.registerTypeAdapter(Date.class, new DateTypeAdapter());
+        return builder.create();
+    }
+
+    // Generic Request interceptor for adding manual headers
+    @Provides @Singleton RequestInterceptor provideRequestInterceptor(final UserStore userStore) {
+        return new RequestInterceptor() {
+            @Override public void intercept(RequestFacade request) {
+                // Authorization header
+                request.addHeader("Accept", "application/json");
+                if (userStore.getAccessToken() != null) {
+                    request.addHeader("Authorization", "Bearer " + userStore.getAccessToken());
+                }
+            }
+        };
+    }
+
     // Generic Rest Adapter class. comment out log line to output all rest api action logs
-    @Provides @Singleton RestAdapter provideRestAdapter(Endpoint endpoint, Client client, Bus bus) {
-        Gson gson = new GsonBuilder()
-                .registerTypeAdapter(Date.class, new DateTypeAdapter())
-                .create();
+    @Provides @Singleton RestAdapter provideRestAdapter(Gson gson, Endpoint endpoint, Client client, Bus bus, RequestInterceptor requestInterceptor) {
         return new RestAdapter.Builder() //
-                .setRequestInterceptor(new RequestInterceptor() {
-                    @Override public void intercept(RequestFacade request) {
-                        request.addHeader("Accept", "application/json");
-                        if (userToken != null) {
-                            request.addHeader("Authorization", userToken);
-                        }
-                    }
-                })
+                .setRequestInterceptor(requestInterceptor)
                 .setClient(client)
                 .setErrorHandler(new NetworkErrorHandler(bus))
                 .setLogLevel(RestAdapter.LogLevel.FULL)
@@ -126,43 +139,8 @@ public class BasicModule {
         return restAdapter.create(DummyService.class);
     }
 
-    public void setUserToken(String token) {
-        CLog.t("Token Set to:", token);
-        this.userToken = token;
-    }
-
-    // Custom Date formatter for api
-    private static class DateTypeAdapter implements JsonSerializer<Date>, JsonDeserializer<Date> {
-        private final DateFormat dateFormat;
-        private final DateFormat dateFormatWithMillis;
-
-        private DateTypeAdapter() {
-            dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
-            dateFormatWithMillis = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-            dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
-            dateFormatWithMillis.setTimeZone(TimeZone.getTimeZone("UTC"));
-        }
-
-        // Java object to JSON conversion for requests
-        @Override public synchronized JsonElement serialize(Date date, Type type,
-                                                            JsonSerializationContext jsonSerializationContext) {
-            return new JsonPrimitive(dateFormat.format(date));
-        }
-
-        // JSON to java object conversion for responses
-        @Override public synchronized Date deserialize(JsonElement jsonElement, Type type,
-                                                       JsonDeserializationContext jsonDeserializationContext) {
-            try {
-                String dateStr = jsonElement.getAsString();
-                if (dateStr.length() > 20) {
-                    return dateFormatWithMillis.parse(jsonElement.getAsString());
-                } else {
-                    return dateFormat.parse(jsonElement.getAsString());
-                }
-            } catch (ParseException e) {
-                throw new JsonParseException(e);
-            }
-        }
+    @Provides @Singleton UserService provideUserService(RestAdapter restAdapter) {
+        return restAdapter.create(UserService.class);
     }
 
     private class NetworkErrorHandler implements ErrorHandler {

@@ -8,11 +8,11 @@ import android.widget.TextView;
 import net.techguild.base.R;
 import net.techguild.base.data.model.Dummy;
 
+import butterknife.Bind;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
 
 public class DummyItemView extends LinearLayout {
-    @InjectView(R.id.dummyText) TextView dummyText;
+    @Bind(R.id.dummyText) TextView dummyText;
 
     private Dummy item;
 
@@ -20,18 +20,22 @@ public class DummyItemView extends LinearLayout {
         super(context, attrs);
     }
 
+    public static int getLayoutId() {
+        return R.layout.item_view_dummy;
+    }
+
     @Override protected void onFinishInflate() {
         super.onFinishInflate();
-        ButterKnife.inject(this);
+        ButterKnife.bind(this);
     }
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        ButterKnife.inject(this);
+        ButterKnife.bind(this);
     }
 
     @Override protected void onDetachedFromWindow() {
-        ButterKnife.reset(this);
+        ButterKnife.unbind(this);
         super.onDetachedFromWindow();
     }
 

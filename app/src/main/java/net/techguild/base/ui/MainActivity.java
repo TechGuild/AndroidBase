@@ -5,34 +5,72 @@ import android.support.v4.widget.SwipeRefreshLayout;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.ListView;
-import android.widget.Toast;
 
 import net.techguild.base.R;
-import net.techguild.base.data.adapter.DummyAdapter;
-import net.techguild.base.data.adapter.base.BindableList;
+import net.techguild.base.data.api.DummyService;
+import net.techguild.base.data.manager.UserManager;
+import net.techguild.base.data.request.DummyRequest;
+import net.techguild.base.data.response.DummyResponse;
+import net.techguild.base.util.ApiResponseObserver;
 import net.techguild.base.util.CActivity;
+import net.techguild.base.util.DaggerHelper;
 
+import javax.inject.Inject;
+
+import butterknife.Bind;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
+import rx.functions.Action1;
 
-public class MainActivity extends CActivity implements BindableList, SwipeRefreshLayout.OnRefreshListener {
-    @InjectView(R.id.list) ListView list;
-    @InjectView(R.id.swipeContainer) SwipeRefreshLayout swipeContainer;
+public class MainActivity extends CActivity implements SwipeRefreshLayout.OnRefreshListener {
+    @Bind(R.id.list) ListView list;
+    @Bind(R.id.swipeContainer) SwipeRefreshLayout swipeRefreshLayout;
+
+    @Inject DummyService dummyService;
+    @Inject UserManager userManager;
+
     private DummyAdapter adapter;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        ButterKnife.inject(this);
+        DaggerHelper.inject(this);
+        ButterKnife.bind(this);
 
-        adapter = new DummyAdapter(this, this);
+        initListView();
+        fetchDummyList();
+    }
+
+    private void initListView() {
+        adapter = new DummyAdapter(this);
         list.setAdapter(adapter);
-        swipeContainer.setOnRefreshListener(this);
-        adapter.loadData("");
+        swipeRefreshLayout.setOnRefreshListener(this);
+    }
+
+    private void fetchDummyList() {
+        // Sample api request
+        ApiResponseObserver.observe(
+                dummyService.getDummyList(new DummyRequest("filter")),
+                new Action1<DummyResponse>() {
+                    @Override public void call(DummyResponse dummyResponse) {
+                        // Feed adapter with data
+                        adapter.loadData(dummyResponse.results);
+                        if (swipeRefreshLayout != null) {
+                            swipeRefreshLayout.setRefreshing(false);
+                        }
+                    }
+                },
+                new Action1<Throwable>() {
+                    @Override public void call(Throwable throwable) {
+                        if (swipeRefreshLayout != null) {
+                            swipeRefreshLayout.setRefreshing(false);
+                        }
+                    }
+                }
+        );
     }
 
     @Override protected void onDestroy() {
-        ButterKnife.reset(this);
+        ButterKnife.unbind(this);
         super.onDestroy();
     }
 
@@ -52,35 +90,8 @@ public class MainActivity extends CActivity implements BindableList, SwipeRefres
         return super.onOptionsItemSelected(item);
     }
 
-    @Override public void onRefreshBegin() {
-        // Show loading
-    }
-
-    @Override public void onRefreshEnd() {
-        // Hide Loading
-
-        if (swipeContainer != null) {
-            swipeContainer.setRefreshing(false);
-        }
-    }
-
-    @Override public void onShowMoreBegin() {
-        // Show scroll loading
-    }
-
-    @Override public void onShowMoreEnd() {
-        // Hide scroll loading
-    }
-
-    @Override public void onError() {
-        if (swipeContainer != null) {
-            swipeContainer.setRefreshing(false);
-        }
-
-        Toast.makeText(this, "Error", Toast.LENGTH_SHORT).show();
-    }
-
     @Override public void onRefresh() {
-        adapter.loadData();
+        // On pull to refresh
+        fetchDummyList();
     }
 }
